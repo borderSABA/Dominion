@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>DOMINION ONLINE v0.14</title>
+<title>DOMINION ONLINE v0.15</title>
 <style>
 :root{
   --bg:#12150f;--panel:#20261b;--panel2:#2b3225;--line:#566148;--text:#f3f0df;--muted:#b7b9aa;
@@ -143,17 +143,19 @@ button{color:inherit}
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="logo">DOMINION <span class="ver">ONLINE v0.14</span></div>
+    <div class="logo">DOMINION <span class="ver">ONLINE v0.15</span></div>
     <div class="tabs" id="roomTabs" style="display:none">
       <button class="tabbtn active" data-panel="gamePanel">ゲーム</button>
       <button class="tabbtn" data-panel="setPanel">セット</button>
       <button class="tabbtn" data-panel="logPanel">ログ</button>
-</div>
+    </div>
+    <span id="onlineGameConn" class="notice" style="display:none;white-space:nowrap"></span>
+    <button id="leaveGameOnline" class="danger smallbtn" style="display:none">対戦退出</button>
   </header>
 
   <section id="titleScreen" class="screen active">
     <div class="titleCard">
-      <div class="ver">ONLINE BUILD v0.14</div>
+      <div class="ver">ONLINE BUILD v0.15</div>
       <h1>DOMINION</h1>
       <p>
         4つの固定ルームで遊ぶオンライン版です。CPUを追加すれば1人でも開始できます。<br>
@@ -170,7 +172,7 @@ button{color:inherit}
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <h2 id="onlineRoomTitle" style="margin:0">ルーム</h2>
             <span id="onlineConn" class="notice">未接続</span>
-            <button id="leaveOnlineRoom" class="smallbtn" style="margin-left:auto">タイトルへ戻る</button>
+            <button id="leaveOnlineRoom" class="smallbtn" style="margin-left:auto">ロビー退出</button>
           </div>
           <div id="onlineSeats" class="onlineSeats"></div>
           <div class="onlineLobbyActions">
@@ -1176,6 +1178,6 @@ renderSetGrid();renderLog();
 
 
 
-<script src="online-v014.js"></script>
+<script src="online-v015.js"></script>
 </body>
 </html>

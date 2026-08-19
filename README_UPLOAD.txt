@@ -1,4 +1,4 @@
-DOMINION ONLINE v0.14 - GitHub Pages
+DOMINION ONLINE v0.15 - GitHub Pages
 
 Upload only the files in this folder to the repository root.
 
@@ -13,4 +13,4 @@ Main changes:
 Default Workers URL:
 https://dominion-online.naitoryo7110.workers.dev
 
-If your deployed URL differs, edit SERVER_URL in online-v014.js.
+If your deployed URL differs, edit SERVER_URL in online-v015.js.
