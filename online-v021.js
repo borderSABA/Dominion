@@ -1,0 +1,451 @@
+(()=>{
+"use strict";
+const SERVER_URL="https://dominion-online.naitoryo7110.workers.dev";
+const ROOM_COUNT=4,MAX_PLAYERS=6,SESSION_KEY="dominionOnlineSessionV16";
+const NET={ws:null,room:0,seat:null,isHost:false,clientId:localStorage.getItem("dominionClientId")||crypto.randomUUID(),name:localStorage.getItem("dominionName")||"",cpuCount:0,members:[],config:null,connected:false,suppress:false,pushTimer:null,pending:new Map(),seq:0,reconnectTimer:null,started:false,cpuTimer:null,intentionalLeave:false,resumeAttempt:false,wasDisconnected:false,lastAttackNoticeSeen:null,lastGainNoticeSeen:null,attackPopTimer:null,gainPopTimer:null};
+localStorage.setItem("dominionClientId",NET.clientId);state.customKingdom=[];state.playerCount=2;
+function saveOnlineSession(){if(NET.room>0)localStorage.setItem(SESSION_KEY,JSON.stringify({room:NET.room,clientId:NET.clientId,name:NET.name||"",savedAt:Date.now()}));}
+function clearOnlineSession(){localStorage.removeItem(SESSION_KEY);}
+function readOnlineSession(){try{const x=JSON.parse(localStorage.getItem(SESSION_KEY)||"null");return x&&x.room>=1&&x.room<=ROOM_COUNT&&x.clientId===NET.clientId?x:null;}catch{return null;}}
+function setOnlineGameUi(playing){
+  const setTab=document.querySelector('.tabbtn[data-panel="setPanel"]');
+  if(setTab)setTab.style.display=playing?"none":"";
+  const leave=document.getElementById("leaveGameOnline"),conn=document.getElementById("onlineGameConn"),turnCenter=document.getElementById("topTurnCenter");
+  if(leave)leave.style.display=playing?"inline-flex":"none";
+  if(conn){conn.style.display=playing?"inline":"none";conn.textContent=NET.connected?"接続中":"再接続中…";}
+  if(turnCenter)turnCenter.style.display=playing?"block":"none";
+  if(playing&&document.getElementById("setPanel")?.classList.contains("active"))switchPanel("gamePanel");
+}
+function updateGameConnectionUi(){const c=document.getElementById("onlineGameConn");if(c&&NET.started){c.style.display="inline";c.textContent=NET.connected?"接続中":"再接続中…";}}
+function esc(s){return String(s??"").replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function wsUrl(){return SERVER_URL.replace(/^http/i,"ws");}function serverFetch(path,opt){return fetch(SERVER_URL+path,opt);}function send(msg){if(NET.ws?.readyState===WebSocket.OPEN)NET.ws.send(JSON.stringify(msg));}
+function connectedHumans(){return (NET.members||[]).filter(m=>m.connected).sort((a,b)=>a.seat-b.seat);}function totalLobbyPlayers(){return Math.min(MAX_PLAYERS,connectedHumans().length+NET.cpuCount);}function localIsActive(){return state.inGame&&state.turn===0&&!state.players[0]?.isCPU;}
+function isLocalHuman(p){return p===state.players[0]&&!p?.isCPU;}function isRemoteHuman(p){return !!p&&!p.isCPU&&p.netSeat!=null&&p.netSeat!==NET.seat;}function playerByNetSeat(seat){return state.players.find(p=>!p.isCPU&&p.netSeat===seat);}
+function orderedPlayers(){return [...state.players].sort((a,b)=>(a.gameSeat??0)-(b.gameSeat??0));}
+function opponentsOf(p){const a=orderedPlayers(),i=a.indexOf(p);return i<0?[]:a.slice(i+1).concat(a.slice(0,i));}
+function nextIndexAfter(idx){const p=state.players[idx],a=orderedPlayers(),i=a.indexOf(p),next=a[(i+1)%a.length];return state.players.indexOf(next);}
+other=function(p){return opponentsOf(p)[0]||p;};
+
+function renderTitle(){const ui=document.getElementById("onlineTitleUi");ui.innerHTML=`<div class="onlineTitleForm"><input id="onlineName" class="onlineName" maxlength="16" placeholder="名前" value="${esc(NET.name)}"><button id="refreshRooms" class="smallbtn">更新</button></div><div id="roomGrid" class="roomGrid"></div><div id="titleServerMsg" class="notice" style="margin-top:10px"></div>`;document.getElementById("onlineName").oninput=e=>{NET.name=e.target.value.trim().slice(0,16);localStorage.setItem("dominionName",NET.name)};document.getElementById("refreshRooms").onclick=loadRooms;loadRooms();}
+async function hardResetRoomFromTitle(room){
+  if(!confirm(`ルーム ${room} を完全に初期化しますか？\n対戦中のプレイヤーも全員タイトルへ戻されます。`))return;
+  const msg=document.getElementById("titleServerMsg");if(msg)msg.textContent=`ルーム ${room} を初期化中…`;
+  try{
+    const r=await serverFetch(`/room/${room}/reset`,{method:"POST"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);
+    if(msg)msg.textContent=`ルーム ${room} を初期化しました。`;
+    await loadRooms();
+  }catch(e){if(msg)msg.textContent=`初期化に失敗しました：${e.message||e}`;}
+}
+async function loadRooms(){
+  const grid=document.getElementById("roomGrid");if(!grid)return;
+  grid.innerHTML=Array.from({length:ROOM_COUNT},(_,i)=>`<div class="roomCard"><b>ルーム ${i+1}</b><div class="roomStatus">取得中...</div></div>`).join("");
+  try{
+    const r=await serverFetch("/rooms");if(!r.ok)throw new Error("HTTP "+r.status);const data=await r.json();
+    grid.innerHTML=data.rooms.map(x=>`<div class="roomCard">
+      <button class="roomJoin" data-room="${x.room}"><b>ルーム ${x.room}</b><div class="roomStatus">${x.started?"対戦中":"ロビー"} / 人間${x.connectedHumans||0} + CPU${x.cpuCount||0}${x.hostName?" / "+esc(x.hostName):""}</div></button>
+      <button class="danger smallbtn roomResetTitle" data-reset-room="${x.room}">初期化</button>
+    </div>`).join("");
+    grid.querySelectorAll("[data-room]").forEach(b=>b.onclick=()=>joinRoom(Number(b.dataset.room)));
+    grid.querySelectorAll("[data-reset-room]").forEach(b=>b.onclick=e=>{e.stopPropagation();hardResetRoomFromTitle(Number(b.dataset.resetRoom));});
+    document.getElementById("titleServerMsg").textContent="";
+  }catch(e){document.getElementById("titleServerMsg").textContent="サーバーへ接続できません。Cloudflare Workersを先にデプロイしてください。";}
+}
+function showRoomScreen(){document.getElementById("titleScreen").classList.remove("active");document.getElementById("roomScreen").classList.add("active");document.getElementById("roomTabs").style.display="flex";renderSetGrid();renderLog();switchPanel("gamePanel");setOnlineGameUi(!!NET.started);}
+function resetLocalRoomState(){NET.room=0;NET.seat=null;NET.connected=false;NET.started=false;NET.isHost=false;NET.members=[];NET.cpuCount=0;NET.config=null;NET.intentionalLeave=false;NET.resumeAttempt=false;try{NET.ws?.close(1000,"leave")}catch{}NET.ws=null;}
+function showTitle(){document.getElementById("roomScreen").classList.remove("active");document.getElementById("titleScreen").classList.add("active");document.getElementById("roomTabs").style.display="none";setOnlineGameUi(false);resetLocalRoomState();renderTitle();}
+function intentionalLeaveRoom(){
+  if(!NET.room){clearOnlineSession();showTitle();return;}
+  NET.intentionalLeave=true;clearOnlineSession();
+  send({type:"leave"});
+  setTimeout(()=>{try{NET.ws?.close(1000,"intentional_leave")}catch{}showTitle();},80);
+}
+function joinRoom(room,opt={}){
+  const name=(document.getElementById("onlineName")?.value||NET.name||opt.name||"プレイヤー").trim().slice(0,16)||"プレイヤー";
+  NET.name=name;localStorage.setItem("dominionName",name);NET.room=room;NET.intentionalLeave=false;NET.resumeAttempt=!!opt.resume;
+  try{if(NET.ws&&NET.ws.readyState<=1)NET.ws.close(1000,"replace_socket")}catch{}
+  const ws=new WebSocket(`${wsUrl()}/room/${room}/ws`);NET.ws=ws;
+  ws.onopen=()=>send({type:"join",clientId:NET.clientId,name,resume:!!opt.resume});
+  ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch{return}handleMessage(m)};
+  ws.onclose=()=>{
+    if(ws!==NET.ws)return;NET.connected=false;NET.wasDisconnected=true;updateLobby();updateGameConnectionUi();
+    if(NET.room&&!NET.intentionalLeave&&readOnlineSession()){clearTimeout(NET.reconnectTimer);NET.reconnectTimer=setTimeout(()=>joinRoom(NET.room,{resume:true,name:NET.name}),1200)}
+  };
+  ws.onerror=()=>{};
+}
+function handleMessage(m){if(m.type==="welcome"){const resumed=NET.resumeAttempt||NET.wasDisconnected;NET.connected=true;NET.wasDisconnected=false;NET.seat=m.seat;NET.isHost=m.hostId===NET.clientId;NET.members=m.members||[];NET.cpuCount=m.cpuCount||0;NET.config=m.config||null;NET.started=!!m.started;saveOnlineSession();showRoomScreen();applyLobbyConfig();updateLobby();if(m.snapshot){importCanonical(m.snapshot);showGame();if(resumed)toast("対戦へ再接続しました");}else if(resumed)toast("ルームへ再接続しました");NET.resumeAttempt=false;}
+else if(m.type==="room_update"){NET.members=m.members||NET.members;NET.cpuCount=m.cpuCount||0;NET.config=m.config||NET.config;NET.started=!!m.started;NET.isHost=m.hostId===NET.clientId;applyLobbyConfig();updateLobby();}
+else if(m.type==="game_state"){if(m.fromSeat===NET.seat)return;importCanonical(m.snapshot);NET.started=true;showGame();maybeRunCpu();}
+else if(m.type==="choice_request"&&m.toSeat===NET.seat)showRemoteChoice(m);else if(m.type==="choice_response"&&m.toSeat===NET.seat){const f=NET.pending.get(m.requestId);if(f){NET.pending.delete(m.requestId);f(m.answer)}}
+else if(m.type==="member_left"){NET.members=m.members||NET.members;NET.isHost=m.hostId===NET.clientId;if(m.snapshot){importCanonical(m.snapshot);NET.started=true;showGame();}updateLobby();maybeRunCpu();}
+else if(m.type==="reset_done"){state.inGame=false;NET.started=false;document.getElementById("activeGame").style.display="none";document.getElementById("lobbyBox").style.display="block";setOnlineGameUi(false);updateLobby();}
+else if(m.type==="hard_reset"){NET.intentionalLeave=true;clearOnlineSession();try{NET.ws?.close(1000,"room_hard_reset")}catch{}toast("部屋が初期化されました");setTimeout(showTitle,120);}
+else if(m.type==="left_done"){clearOnlineSession();showTitle();}
+else if(m.type==="error"){toast(m.message||"サーバーエラー");if(NET.resumeAttempt&&String(m.message||"").includes("対戦中")){clearOnlineSession();NET.intentionalLeave=true;setTimeout(showTitle,150);}}}
+function ensureCpuButtons(){const add=document.getElementById("toggleCpuOnline");if(!add)return;add.textContent="CPUを追加";if(!document.getElementById("removeCpuOnline")){const rm=document.createElement("button");rm.id="removeCpuOnline";rm.className="smallbtn";rm.textContent="CPUを削除";add.after(rm);rm.onclick=()=>{if(NET.isHost&&!NET.started&&NET.cpuCount>0)send({type:"config",cpuCount:NET.cpuCount-1,config:currentConfig(false)})};}}
+function updateLobby(){setOnlineGameUi(!!NET.started);ensureCpuButtons();const title=document.getElementById("onlineRoomTitle"),conn=document.getElementById("onlineConn");if(!title)return;title.textContent=`ルーム ${NET.room}`;conn.textContent=NET.connected?`接続中 / 席${(NET.seat??0)+1}${NET.isHost?" / ホスト":""}`:"再接続中...";const humans=NET.members||[];let cpuLeft=NET.cpuCount;let cards=[];for(let seat=0;seat<MAX_PLAYERS;seat++){const m=humans.find(x=>x.seat===seat);let label="空席",badge="";if(m){label=esc(m.name)+(m.connected?"":"（切断）");if(m.clientId===NET.clientId)badge=' <span class="netBadge">あなた</span>';}else if(cpuLeft>0){label=`CPU ${NET.cpuCount-cpuLeft+1}`;cpuLeft--;}cards.push(`<div class="seatCard ${m?.clientId===NET.clientId?"host":""}"><b>席${seat+1}</b><div>${label}${badge}</div></div>`);}document.getElementById("onlineSeats").innerHTML=cards.join("");const hostOnly=!NET.isHost||NET.started;for(const id of ["toggleCpuOnline","removeCpuOnline","openSetFromLobby","openCustomCards","rerollSupply","resetOnlineRoom","startGame"]){const el=document.getElementById(id);if(el)el.disabled=hostOnly;}const hc=connectedHumans().length,total=hc+NET.cpuCount;document.getElementById("toggleCpuOnline").disabled=hostOnly||total>=MAX_PLAYERS;document.getElementById("removeCpuOnline").disabled=hostOnly||NET.cpuCount<=0;document.getElementById("startGame").disabled=hostOnly||total<2||total>MAX_PLAYERS;const ck=state.customKingdom||[];document.getElementById("customKingdomStatus").textContent=`参加 ${total}/6人（人間${hc} / CPU${NET.cpuCount}） / 固定カード ${ck.length}/10${ck.length?"："+ck.join(" / "):""}`;if(!NET.started&&!state.inGame&&NET.config?.previewKingdom?.length){state.kingdom=[...NET.config.previewKingdom];renderSupplyPreview();}}
+function applyLobbyConfig(){if(!NET.config)return;state.selectedSets=new Set(NET.config.selectedSets?.length?NET.config.selectedSets:["基本"]);state.customKingdom=[...(NET.config.customKingdom||[])];if(!NET.started&&!state.inGame&&NET.config.previewKingdom?.length)state.kingdom=[...NET.config.previewKingdom];renderSetGrid();if(!NET.started&&!state.inGame)renderSupplyPreview();}
+function currentConfig(preview=true){return {selectedSets:[...state.selectedSets],customKingdom:[...(state.customKingdom||[])],previewKingdom:preview?[...state.kingdom]:(NET.config?.previewKingdom||[])};}
+function publishConfig(preview=true){if(!NET.isHost)return;NET.config=currentConfig(preview);send({type:"config",cpuCount:NET.cpuCount,config:NET.config});updateLobby();}
+
+function victoryPileSize(n){return n===2?8:12;}function provinceCount(n){return n===2?8:n<=4?12:n===5?15:18;}function curseCount(n){return 10*(n-1);}function copperSupply(n){return n<=4?60-7*n:120-7*n;}function endPileThreshold(n){return n>=5?4:3;}
+const oldBuildSupply=buildSupply;
+function initializeSupplyForKingdomV20(kingdom){
+  const n=Math.max(2,Math.min(6,state.playerCount||totalLobbyPlayers()||2));
+  const chosen=[...new Set((kingdom||[]).filter(x=>CARDS[x]))].slice(0,10);
+  if(chosen.length!==10){toast("王国カードが10山に確定していません");return false;}
+  state.kingdom=chosen;
+  const vp=victoryPileSize(n);
+  state.supply={"銅貨":copperSupply(n),"銀貨":n>=5?80:40,"金貨":n>=5?60:30,"屋敷":vp,"公領":vp,"属州":provinceCount(n),"呪い":curseCount(n)};
+  if(state.selectedSets.has("錬金術")){if(!CARDS["ポーション"])add(C("ポーション",4,["財宝"],"錬金術","+1ポーション","generic",null,{treasurePotions:1}));state.supply["ポーション"]=16;}
+  if(state.selectedSets.has("繁栄")){if(!CARDS["白金貨"])add(C("白金貨",9,["財宝"],"繁栄","+5コイン","generic",null,{treasureCoins:5}));if(!CARDS["植民地"])add(C("植民地",11,["勝利点"],"繁栄","+10勝利点","generic",()=>10,{}));state.supply["白金貨"]=n>=5?24:12;state.supply["植民地"]=provinceCount(n);}
+  if(state.selectedSets.has("移動動物園")){if(!CARDS["馬"])add(C("馬",3,["アクション"],"移動動物園","+2カード｜+1アクション｜使用後、馬の山へ戻る","generic",null,{draw:2,actions:1,returnToSupply:true}));state.supply["馬"]=30;}
+  if(state.selectedSets.has("暗黒時代")){if(!CARDS["廃墟"])add(C("廃墟",0,["アクション","廃墟"],"暗黒時代","廃墟の混成山札","generic"));state.supply["廃墟"]=10*(n-1);}
+  for(const x of state.kingdom)state.supply[x]=typeHas(x,"勝利点")?vp:10;
+  renderSupplyPreview();
+  return true;
+}
+buildSupply=function(preservePreview=false){
+  const n=Math.max(2,Math.min(6,state.playerCount||totalLobbyPlayers()||2));
+  let chosen=null;
+  if(preservePreview){
+    const preview=(NET.config?.previewKingdom?.length===10?NET.config.previewKingdom:(state.kingdom?.length===10?state.kingdom:null));
+    if(preview)chosen=[...preview];
+  }
+  if(!chosen){
+    const pool=[...state.selectedSets].flatMap(s=>KINGDOM_BY_SET[s]||[]),uniq=[...new Set(pool)];
+    const fixed=[...new Set((state.customKingdom||[]).filter(x=>CARDS[x]))].slice(0,10),remaining=uniq.filter(x=>!fixed.includes(x));
+    if(fixed.length<10&&remaining.length<10-fixed.length){toast("王国カード候補が10山に足りません");return false;}
+    chosen=[...fixed,...shuffle([...remaining]).slice(0,10-fixed.length)];
+  }
+  return initializeSupplyForKingdomV20(chosen);
+};
+
+function openCustomPicker(){if(NET.started){toast("対戦中はカード設定を変更できません");return;}if(!NET.isHost){toast("ホストのみ変更できます");return;}let selected=new Set(state.customKingdom||[]);const all=[...new Set(Object.values(KINGDOM_BY_SET).flat())].filter(n=>CARDS[n]).sort((a,b)=>a.localeCompare(b,"ja"));const body=`<div class="customPickerToolbar"><input id="customSearch" class="customSearch" placeholder="カード名で検索"><b id="customCount">${selected.size}/10</b></div><div id="customCardList" class="customCardList"></div>`;modalOpen("好きな王国カード","最大10枚まで固定できます。10枚未満なら残りを使用セットからランダム補充します。",body,`<button id="clearCustom" class="smallbtn">全解除</button><button id="customCancel" class="smallbtn">キャンセル</button><button id="customOk" class="mainbtn">決定</button>`);const list=document.getElementById("customCardList"),search=document.getElementById("customSearch"),count=document.getElementById("customCount");const drawList=()=>{const q=search.value.trim(),names=all.filter(n=>!q||n.includes(q)).slice(0,260);list.innerHTML=names.map(n=>`<button class="customCardBtn ${selected.has(n)?"selected":""}" data-custom="${esc(n)}"><b>${esc(n)}</b><br><span>${esc(CARDS[n].set)} / ${cardCostLabel(n)}コスト</span></button>`).join("");list.querySelectorAll("[data-custom]").forEach(b=>b.onclick=()=>{const n=b.dataset.custom;if(selected.has(n))selected.delete(n);else if(selected.size<10)selected.add(n);else{return toast("固定できるのは10枚までです")}count.textContent=`${selected.size}/10`;drawList();});};search.oninput=drawList;drawList();document.getElementById("clearCustom").onclick=()=>{selected.clear();count.textContent="0/10";drawList()};document.getElementById("customCancel").onclick=modalClose;document.getElementById("customOk").onclick=()=>{state.customKingdom=[...selected];modalClose();state.playerCount=totalLobbyPlayers();buildSupply();publishConfig(true);updateLobby();};}
+
+function prepareMultiPlayerStrip(){const strip=document.querySelector(".playerStrip");if(!strip||document.getElementById("multiPlayerBar"))return;strip.classList.add("multiMode");const hc=document.getElementById("humanBox"),cc=document.getElementById("cpuBox"),turn=document.querySelector(".turnCenter");const bar=document.createElement("div");bar.id="multiPlayerBar";bar.className="multiPlayerBar";strip.insertBefore(bar,turn);hc.style.display="none";cc.style.display="none";}
+function pstats(p){return `手札 ${p.hand.length} / ${score(p)}VP${p.coffers?` / 財源${p.coffers}`:""}${p.villagers?` / 村人${p.villagers}`:""}${p.favors?` / 好意${p.favors}`:""}${p.debt?` / 負債${p.debt}`:""}`;}
+function renderMultiPlayers(){
+  prepareMultiPlayerStrip();const bar=document.getElementById("multiPlayerBar");if(!bar||!state.inGame)return;
+  bar.innerHTML=orderedPlayers().map(p=>{const i=state.players.indexOf(p);return `<div class="multiPlayerBox ${i===state.turn?"activeTurn":""} ${p===state.players[0]?"me":""}" data-mp="${i}" data-gseat="${p.gameSeat??i}"><div class="mpName">${esc(p.name)}${p.isCPU?' <span class="netBadge">CPU</span>':p===state.players[0]?' <span class="netBadge">あなた</span>':''}</div><div class="mpStats">${pstats(p)}</div></div>`}).join("");
+  bar.querySelectorAll("[data-mp]").forEach(x=>x.onclick=()=>inspectPlayer(Number(x.dataset.mp)));
+  const active=state.players[state.turn];const ph=document.getElementById("phaseLabel");if(ph)ph.textContent=active?`${active.name} / ${state.phase==="action"?"アクション":"購入"}フェーズ`:"準備中";
+}
+function renderSharedPlayArea(){
+  if(!state.inGame)return;
+  const active=state.players[state.turn];if(!active)return;
+  const title=document.querySelector(".playHeader strong"),count=document.getElementById("playCount"),area=document.getElementById("playCards");
+  if(title)title.textContent=`${active.name}のプレイカード`;
+  if(count)count.textContent=`${active.play?.length||0}枚`;
+  if(area)area.innerHTML=(active.play||[]).map((n,i)=>`<div class="card ${cardClass(n)}">
+    <div class="cardTop"><span class="cardName">${n}</span><span class="cost">${cardCostLabel(n)}</span></div>
+    <div class="cardType">${CARDS[n].types.join("・")}</div>
+    <div class="cardText">${cardBonusLine(n)||effectLineArray(CARDS[n].text).map(x=>formatCardText(x)).join("<br>")}</div>
+    <div class="playedMark">${i+1}</div>
+  </div>`).join("");
+}
+
+function canonicalSnapshot(){const plain={};for(const k of Object.keys(state)){if(k==="supplyPick"||k==="busy")continue;let v=state[k];if(v instanceof Set)v=[...v];else v=JSON.parse(JSON.stringify(v));plain[k]=v;}plain.busy=false;plain.supplyPick=null;const activeSeat=state.players[state.turn]?.gameSeat??0;plain.players=[...plain.players].sort((a,b)=>(a.gameSeat??0)-(b.gameSeat??0));plain.turn=plain.players.findIndex(p=>p.gameSeat===activeSeat);return plain;}
+function importCanonical(snap){
+  if(!snap)return;NET.suppress=true;const x=JSON.parse(JSON.stringify(snap));
+  const canonical=[...(x.players||[])].sort((a,b)=>(a.gameSeat??0)-(b.gameSeat??0));const activeGameSeat=canonical[x.turn]?.gameSeat??0;
+  const li=canonical.findIndex(p=>!p.isCPU&&p.netSeat===NET.seat);const local=li>=0?canonical[li]:canonical[0];const others=canonical.filter(p=>p!==local);
+  x.players=[local,...others];x.turn=x.players.findIndex(p=>p.gameSeat===activeGameSeat);
+  for(const [k,v] of Object.entries(x)){if(k==="selectedSets")state[k]=new Set(v);else state[k]=v;}
+  // 対戦中の王国10山はsnapshotだけを正とする。ロビーpreviewからは一切上書きしない。
+  if(state.inGame&&Array.isArray(state.kingdom)){
+    if(!Array.isArray(state.gameKingdomLocked)||state.gameKingdomLocked.length!==10)state.gameKingdomLocked=[...state.kingdom];
+    const missing=state.kingdom.filter(n=>!Object.prototype.hasOwnProperty.call(state.supply||{},n));
+    if(missing.length)console.error("[v0.21] snapshot kingdom/supply mismatch",missing);
+  }
+  state.busy=false;state.supplyPick=null;NET.suppress=false;render();renderMultiPlayers();renderSharedPlayArea();processSyncedUiV16();
+}
+function pushState(force=false){if(!NET.connected||!state.inGame)return;const active=state.players[state.turn];const authority=localIsActive()||(NET.isHost&&active?.isCPU);if(!force&&!authority)return;send({type:"game_state",fromSeat:NET.seat,seq:++NET.seq,snapshot:canonicalSnapshot()});}
+function schedulePush(){clearTimeout(NET.pushTimer);NET.pushTimer=setTimeout(()=>pushState(false),80);}
+const coreRender=render;render=function(){
+  if(state.inGame&&Array.isArray(state.gameKingdomLocked)&&state.gameKingdomLocked.length===10){
+    const changed=!Array.isArray(state.kingdom)||state.kingdom.length!==10||state.kingdom.some((n,i)=>n!==state.gameKingdomLocked[i]);
+    if(changed)state.kingdom=[...state.gameKingdomLocked];
+  }
+  coreRender();renderMultiPlayers();renderSharedPlayArea();if(!NET.suppress&&NET.connected&&state.inGame){const active=state.players[state.turn];if(localIsActive()||(NET.isHost&&active?.isCPU))schedulePush();}};
+
+
+function ensureUiPopV16(id,cls){let el=document.getElementById(id);if(!el){el=document.createElement("div");el.id=id;el.className=cls;document.body.appendChild(el);}return el;}
+function showTurnPopV16(text,id=null){
+  if(id!=null)NET.lastTurnNoticeSeen=id;
+  const el=ensureUiPopV16("turnPopOnlineV16","turnPopOnline");el.textContent=text;el.classList.add("show");
+  clearTimeout(NET.turnPopTimer);NET.turnPopTimer=setTimeout(()=>el.classList.remove("show"),2000);
+}
+function playerBoxByGameSeatV16(gameSeat){return document.querySelector(`.multiPlayerBox[data-gseat="${gameSeat}"]`);}
+function showPurchasePopV16(ev){
+  if(!ev)return;NET.lastPurchaseSeen=ev.id;
+  const box=playerBoxByGameSeatV16(ev.gameSeat);if(!box)return;
+  const el=ensureUiPopV16("purchasePopOnlineV16","purchasePopOnline");el.textContent=`購入：${ev.card}`;
+  const r=box.getBoundingClientRect();el.style.left=`${r.left+r.width/2}px`;el.style.top=`${r.top}px`;el.classList.add("show");
+  box.style.transition="box-shadow .15s";box.style.boxShadow="0 0 0 3px #d6b454 inset,0 0 18px #d6b454";
+  clearTimeout(NET.purchasePopTimer);NET.purchasePopTimer=setTimeout(()=>{el.classList.remove("show");box.style.boxShadow="";},1600);
+}
+function showGainPopV21(ev){
+  if(!ev)return;
+  NET.lastGainNoticeSeen=ev.id;
+  const box=playerBoxByGameSeatV16(ev.gameSeat);if(!box)return;
+  const el=ensureUiPopV16("gainPopOnlineV21","gainPopOnline");
+  el.textContent=`獲得：${ev.card}`;
+  const r=box.getBoundingClientRect();
+  el.style.left=`${r.left+r.width/2}px`;el.style.top=`${r.top}px`;
+  el.classList.add("show");
+  box.style.transition="box-shadow .15s";
+  box.style.boxShadow="0 0 0 3px #78c98b inset,0 0 18px #78c98b";
+  clearTimeout(NET.gainPopTimer);
+  NET.gainPopTimer=setTimeout(()=>{el.classList.remove("show");box.style.boxShadow="";},1500);
+}
+function banditCardHtmlV21(n){
+  const c=CARDS[n];
+  if(!c)return `<div class="attackRevealResult">${esc(n)}</div>`;
+  return `<div class="card ${cardClass(n)}">
+    <div class="cardTop"><span class="cardName">${esc(n)}</span><span class="cost">${cardCostLabel(n)}</span></div>
+    <div class="cardType">${c.types.join("・")}</div>
+    <div class="cardText">${cardBonusLine(n)||effectLineArray(c.text).map(x=>formatCardText(x)).join("<br>")}</div>
+  </div>`;
+}
+function showAttackNoticeV21(ev){
+  if(!ev)return;
+  NET.lastAttackNoticeSeen=ev.id;
+  const el=ensureUiPopV16("attackRevealPopOnlineV21","attackRevealPopOnline");
+  const box=playerBoxByGameSeatV16(ev.targetGameSeat);
+  if(ev.kind==="bandit_reveal"){
+    el.innerHTML=`<div class="attackRevealHead">山賊：${esc(ev.targetName)}の山札を公開</div>
+      <div class="attackRevealSub">山札の上から${ev.cards.length}枚</div>
+      <div class="attackRevealCards">${ev.cards.map(banditCardHtmlV21).join("")}</div>`;
+  }else if(ev.kind==="bandit_result"){
+    const parts=[];
+    if(ev.trashed?.length)parts.push(`廃棄：${ev.trashed.join("・")}`);
+    if(ev.discarded?.length)parts.push(`捨て札：${ev.discarded.join("・")}`);
+    if(!parts.length)parts.push("処理するカードなし");
+    el.innerHTML=`<div class="attackRevealHead">山賊：${esc(ev.targetName)}への結果</div>
+      <div class="attackRevealResult">${parts.map(esc).join("<br>")}</div>`;
+  }else if(ev.kind==="attack_blocked"){
+    el.innerHTML=`<div class="attackRevealHead">${esc(ev.targetName)}がアタックを防御</div>
+      <div class="attackRevealResult">${esc(ev.text||"アタックの影響なし")}</div>`;
+  }
+  el.classList.add("show");
+  if(box){
+    box.style.transition="box-shadow .15s,filter .15s";
+    box.style.boxShadow="0 0 0 3px #c96655 inset,0 0 20px #c96655";
+    box.style.filter="brightness(1.12)";
+  }
+  clearTimeout(NET.attackPopTimer);
+  NET.attackPopTimer=setTimeout(()=>{
+    el.classList.remove("show");
+    if(box){box.style.boxShadow="";box.style.filter="";}
+  },ev.kind==="bandit_reveal"?1850:1350);
+}
+function processSyncedUiV16(){
+  const t=state.turnNotice;if(t?.id&&t.id!==NET.lastTurnNoticeSeen)showTurnPopV16(t.text,t.id);
+  const p=state.purchaseNotice;if(p?.id&&p.id!==NET.lastPurchaseSeen)showPurchasePopV16(p);
+  const g=state.gainNotice;if(g?.id&&g.id!==NET.lastGainNoticeSeen)showGainPopV21(g);
+  const a=state.attackNotice;if(a?.id&&a.id!==NET.lastAttackNoticeSeen)showAttackNoticeV21(a);
+}
+function announceGainV21(p,card){
+  state.gainNotice={id:makeNoticeIdV16(),gameSeat:p.gameSeat,player:p.name,card};
+  showGainPopV21(state.gainNotice);
+  pushState(true);
+}
+function announceAttackV21(ev){
+  state.attackNotice={id:makeNoticeIdV16(),...ev};
+  showAttackNoticeV21(state.attackNotice);
+  pushState(true);
+}
+function makeNoticeIdV16(){return `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;}
+function setupPlayersMulti(participants){state.players=participants.map(x=>{const p=newPlayer(x.name,!!x.isCPU);p.netSeat=x.netSeat??null;p.gameSeat=x.gameSeat;p.turnsTaken=0;p.deck=shuffle([...Array(7).fill("銅貨"),...Array(3).fill("屋敷")]);p.discard=[];p.hand=[];p.play=[];p.duration=[];p.exile=[];p.trash=[];draw(p,5);return p;});}
+function createParticipants(){
+  const hs=connectedHumans().map(m=>({name:m.name,isCPU:false,netSeat:m.seat}));
+  let used=new Set(hs.map(x=>x.netSeat)),cpus=[];
+  for(let i=0;i<NET.cpuCount;i++){
+    let seat=0;while(used.has(seat))seat++;used.add(seat);
+    cpus.push({name:`CPU ${i+1}`,isCPU:true,netSeat:null});
+  }
+  // 実際の席順だけを毎ゲーム完全ランダム化する。
+  const shuffled=shuffle([...hs,...cpus]);
+  shuffled.forEach((p,i)=>p.gameSeat=i);
+  // 各端末の内部配列では自分を必ず index 0 に置く。
+  // UI/手札/nextPhase の「自分=players[0]」前提を壊さず、表示上の席順は gameSeat で維持する。
+  const me=shuffled.find(p=>!p.isCPU&&p.netSeat===NET.seat);
+  return me?[me,...shuffled.filter(p=>p!==me)]:shuffled;
+}
+function showGame(){document.getElementById("lobbyBox").style.display="none";document.getElementById("activeGame").style.display="flex";switchPanel("gamePanel");setOnlineGameUi(true);prepareMultiPlayerStrip();render();}
+function startOnlineGame(){
+  if(!NET.isHost)return;
+  const parts=createParticipants();
+  if(parts.length<2||parts.length>6)return toast("2～6人で開始してください");
+  state.playerCount=parts.length;
+  // ロビーで表示されている王国10山を、そのまま正式なゲーム用サプライとして固定する。
+  if(!buildSupply(true))return;
+  NET.config=NET.config||currentConfig(false);
+  NET.config.previewKingdom=[...state.kingdom];
+  state.gameKingdomLocked=[...state.kingdom];
+  setupPlayersMulti(parts);
+  state.trash=[];state.logs=[];state.inGame=true;
+  // gameSeat 0 が先手。gameSeat自体を開始時にランダム割当しているので、先手も毎回ランダム。
+  state.turn=state.players.findIndex(p=>p.gameSeat===0);
+  if(state.turn<0)state.turn=0;
+  showGame();
+  log(`<b>ゲーム開始</b>：席順をランダム決定 / ${state.players[state.turn].name} が先手です。`);
+  startTurn();
+  send({type:"start",snapshot:canonicalSnapshot()});pushState(true);maybeRunCpu();
+}
+
+function gameEndCondition(){if(!state.inGame)return false;const n=state.players.length,threshold=endPileThreshold(n);return state.supply["属州"]===0||(Object.prototype.hasOwnProperty.call(state.supply,"植民地")&&state.supply["植民地"]===0)||emptyPiles()>=threshold;}
+checkGameEnd=function(){return false;};
+function finishGameMulti(){state.inGame=false;const ps=orderedPlayers().map(p=>({p,score:score(p),turns:p.turnsTaken||0}));const best=Math.max(...ps.map(x=>x.score)),fewest=Math.min(...ps.filter(x=>x.score===best).map(x=>x.turns));const winners=ps.filter(x=>x.score===best&&x.turns===fewest);document.getElementById("resultTitle").textContent=winners.length===1?`${winners[0].p.name}の勝利`:"引き分け";document.getElementById("resultScores").innerHTML=ps.sort((a,b)=>b.score-a.score||a.turns-b.turns).map(x=>`<div class="scoreRow"><span>${esc(x.p.name)}</span><b>${x.score} VP / ${x.turns}ターン</b></div>`).join("");document.getElementById("result").classList.add("show");log(`<b>ゲーム終了</b> ${ps.map(x=>`${x.p.name} ${x.score}VP`).join(" / ")}`);pushState(true);}
+finishGame=finishGameMulti;
+startTurn=function(){
+  state.phase="action";state.actions=1;state.buys=1;state.coins=0;state.potions=0;state.costReduction=0;state.merchantBonus=0;state.actionsPlayed=0;state.busy=false;state.treasuresCommitted=false;state.supplyPick=null;
+  const p=state.players[state.turn];resolveStartEffects(p);log(`<b>${p.name}</b> のターン`);
+  state.turnNotice={id:makeNoticeIdV16(),text:`${p.name}のターン`,gameSeat:p.gameSeat};
+  render();showTurnPopV16(state.turnNotice.text,state.turnNotice.id);pushState(true);maybeRunCpu();
+};
+endCurrentTurn=function(){if(state.busy)return;const p=state.players[state.turn];p.turnsTaken=(p.turnsTaken||0)+1;cleanup(p);if(gameEndCondition()){finishGameMulti();return;}state.turn=nextIndexAfter(state.turn);startTurn();pushState(true);};
+
+async function cpuTurnMulti(){
+  if(!NET.isHost||!state.inGame)return;const p=state.players[state.turn];if(!p?.isCPU)return;
+  state.busy=true;render();await sleep(360);
+  let guard=0;
+  while(state.phase==="action"&&state.actions>0&&guard++<25){
+    const acts=p.hand.map((n,i)=>({n,i})).filter(x=>typeHas(x.n,"アクション")).sort((a,b)=>actionPriority(b.n)-actionPriority(a.n));
+    if(!acts.length)break;await playActionFromHand(p,acts[0].i,false);render();await sleep(220);
+  }
+  state.phase="buy";state.treasuresCommitted=false;render();await sleep(180);
+  for(let i=p.hand.length-1;i>=0;i--)if(typeHas(p.hand[i],"財宝"))playTreasure(p,i);
+  state.treasuresCommitted=true;payDebt(p);await sleep(200);
+  // +購入を正しく使うため、CPUも購入可能な限り残り購入回数を処理する。
+  let buyGuard=0;
+  while(state.inGame&&state.players[state.turn]===p&&state.buys>0&&buyGuard++<12){
+    const choices=Object.keys(state.supply).filter(n=>canBuyCard(p,n));
+    if(!choices.length)break;
+    let pick=null;
+    if(state.coins>=8&&state.supply["属州"]>0)pick="属州";
+    else if(state.supply["属州"]<=Math.max(4,state.players.length)&&state.coins>=5&&state.supply["公領"]>0)pick="公領";
+    else if(state.coins>=6&&state.supply["金貨"]>0)pick="金貨";
+    else{
+      const kingdom=choices.filter(n=>state.kingdom.includes(n)&&!typeHas(n,"勝利点"));
+      if(kingdom.length)pick=kingdom.sort((a,b)=>buyValue(b)-buyValue(a))[0];
+      else if(state.coins>=3&&state.supply["銀貨"]>0)pick="銀貨";
+      else if(state.supply["銅貨"]>0)pick="銅貨";
+    }
+    if(!pick)break;
+    if(!buyCard(p,pick))break;
+    await sleep(520);
+  }
+  state.busy=false;
+  if(state.inGame&&state.players[state.turn]===p)endCurrentTurn();
+}
+cpuTurn=cpuTurnMulti;function maybeRunCpu(){clearTimeout(NET.cpuTimer);if(!state.inGame||!NET.isHost)return;const p=state.players[state.turn];if(p?.isCPU)NET.cpuTimer=setTimeout(()=>cpuTurnMulti(),220);}
+
+function remoteChoice(target,kind,payload){return new Promise((resolve,reject)=>{if(target.isCPU)return reject(new Error("cpu target"));const requestId=crypto.randomUUID();NET.pending.set(requestId,resolve);send({type:"choice_request",toSeat:target.netSeat,requestId,kind,payload});setTimeout(()=>{if(NET.pending.has(requestId)){NET.pending.delete(requestId);reject(new Error("choice timeout"));}},90000);});}
+function showRemoteChoice(m){const p=m.payload||{},reply=answer=>send({type:"choice_response",toSeat:m.fromSeat,requestId:m.requestId,answer});if(m.kind==="cards"){let sel=new Set(),names=p.names||[];modalOpen(p.title||"選択",p.desc||"",`<div class="choiceGrid">${names.map((n,i)=>`<button class="card ${cardClass(n)}" data-rchoice="${i}">${cardHTML(n,"choice").replace(/^<div[^>]*>|<\\/div>$/g,"")}</button>`).join("")}</div>`,`<button id="remoteChoiceOk" class="mainbtn">決定 0/${p.max}</button>`);const ok=document.getElementById("remoteChoiceOk");ok.disabled=(p.min||0)>0;document.querySelectorAll("[data-rchoice]").forEach(b=>b.onclick=()=>{const i=+b.dataset.rchoice;if(sel.has(i)){sel.delete(i);b.classList.remove("selected")}else if(sel.size<p.max){sel.add(i);b.classList.add("selected")}ok.textContent=`決定 ${sel.size}/${p.max}`;ok.disabled=sel.size<(p.min||0);});ok.onclick=()=>{const a=[...sel];modalClose();reply(a);};}else if(m.kind==="name"){const names=p.names||[];modalOpen(p.title||"選択",p.desc||"",`<div class="choiceGrid">${names.map((n,i)=>`<button class="card ${cardClass(n)}" data-rname="${i}">${cardHTML(n,"choice").replace(/^<div[^>]*>|<\\/div>$/g,"")}</button>`).join("")}`);document.querySelectorAll("[data-rname]").forEach(b=>b.onclick=()=>{const i=+b.dataset.rname;modalClose();reply(names[i]);});}}
+const coreGenericDiscard=genericDiscard;genericDiscard=async function(p,count){count=Math.min(count||0,p.hand.length);if(!count)return;if(p.isCPU)return coreGenericDiscard(p,count);if(isLocalHuman(p))return coreGenericDiscard(p,count);const idxs=await remoteChoice(p,"cards",{title:"カードを捨てる",desc:`${count}枚選択してください`,names:[...p.hand],min:count,max:count});for(const i of [...idxs].sort((a,b)=>b-a))discardFrom(p,i);};
+
+async function attackEach(actor,fn){
+  for(const target of opponentsOf(actor)){
+    if(attackBlocked(target)){
+      announceAttackV21({
+        kind:"attack_blocked",
+        actorGameSeat:actor.gameSeat,
+        targetGameSeat:target.gameSeat,
+        targetName:target.name,
+        text:"堀などによりアタックを防御"
+      });
+      await sleep(700);
+      continue;
+    }
+    await fn(target);
+  }
+}
+genericAttackDiscardTo=async function(p,targetCount){await attackEach(p,async o=>{const need=Math.max(0,o.hand.length-targetCount);if(need)await genericDiscard(o,need);});};
+const coreResolveGeneric=resolveGeneric;resolveGeneric=async function(p,c){const m=c.meta||{};applyMetaResources(p,m);if(m.gainFixed)for(const n of m.gainFixed){if(state.supply[n]>0)gain(p,n);}if(m.discard)await genericDiscard(p,m.discard);if(m.trash){const n=Math.min(m.trash,p.hand.length);if(n)await chooseTrashHand(p,n,n,`${c.name}：廃棄`);}if(m.curseOther){await attackEach(p,async o=>{for(let i=0;i<m.curseOther;i++)gain(o,"呪い");});}if(m.attackDiscardTo!=null)await genericAttackDiscardTo(p,m.attackDiscardTo);if(m.gainMax!=null){const f=m.gainType?(n=>typeHas(n,m.gainType)):(()=>true);await gainChoice(p,m.gainMax,f,m.gainDest||"discard",`${c.name}：対象カードを獲得`);}};
+
+bureaucratAttack=async function(p){await attackEach(p,async o=>{const vs=o.hand.map((n,i)=>({n,i})).filter(x=>typeHas(x.n,"勝利点"));if(!vs.length){log(`${o.name} は勝利点カードを持っていない`);return;}let chosen;if(o.isCPU)chosen=vs.sort((a,b)=>keepValue(a.n)-keepValue(b.n))[0].n;else if(isLocalHuman(o))chosen=await cardNameModal("役人の攻撃","山札の上に置く勝利点カードを選択",vs.map(x=>x.n));else chosen=await remoteChoice(o,"name",{title:"役人の攻撃",desc:"山札の上に置く勝利点カードを選択",names:vs.map(x=>x.n)});const idx=o.hand.indexOf(chosen);if(idx>=0){const [n]=o.hand.splice(idx,1);o.deck.push(n);}});};
+militiaAttack=async function(p){await genericAttackDiscardTo(p,3);};
+banditAttack=async function(p){
+  await attackEach(p,async o=>{
+    const before=score(o),revealed=[];
+    for(let i=0;i<2;i++){const n=takeTop(o);if(n)revealed.push(n);}
+    announceAttackV21({
+      kind:"bandit_reveal",
+      actorGameSeat:p.gameSeat,
+      targetGameSeat:o.gameSeat,
+      targetName:o.name,
+      cards:[...revealed]
+    });
+    // 全員が公開カードを確認できる時間を確保する。
+    await sleep(1850);
+
+    const targets=revealed.filter(n=>typeHas(n,"財宝")&&n!=="銅貨");
+    let trashName=null;
+    if(targets.length===1)trashName=targets[0];
+    else if(targets.length>1){
+      if(o.isCPU)trashName=[...targets].sort((a,b)=>CARDS[b].cost-CARDS[a].cost)[0];
+      else if(isLocalHuman(o))trashName=await cardNameModal("山賊の攻撃","廃棄する財宝を1枚選択",targets);
+      else trashName=await remoteChoice(o,"name",{title:"山賊の攻撃",desc:"公開された財宝から廃棄する1枚を選択",names:targets});
+    }
+
+    const trashed=[],discarded=[];
+    let used=false;
+    for(const n of revealed){
+      if(!used&&n===trashName){
+        state.trash.push(n);o.trash.push(n);trashed.push(n);used=true;
+        log(`${o.name} の <b>${n}</b> が山賊で廃棄`);
+      }else{
+        o.discard.push(n);discarded.push(n);
+        log(`${o.name} の <b>${n}</b> を山賊で捨て札へ`);
+      }
+    }
+    const after=score(o);if(after!==before)showPointPop(o,after-before);
+
+    announceAttackV21({
+      kind:"bandit_result",
+      actorGameSeat:p.gameSeat,
+      targetGameSeat:o.gameSeat,
+      targetName:o.name,
+      trashed,
+      discarded
+    });
+    render();
+    await sleep(1300);
+  });
+};
+const coreResolveEffect=resolveEffect;resolveEffect=async function(p,name){
+  if(name==="山賊"){
+    if(gain(p,"金貨"))announceGainV21(p,"金貨");
+    await banditAttack(p);
+    render();
+    return;
+  }
+  if(name==="議事堂"){draw(p,4);state.buys++;for(const o of opponentsOf(p))draw(o,1);render();return;}
+  if(name==="魔女"){draw(p,2);await attackEach(p,async o=>gain(o,"呪い"));render();return;}
+  await coreResolveEffect(p,name);
+};
+
+// Current player UI / synchronization.
+const coreNextPhase=nextPhase;nextPhase=function(){if(!localIsActive())return;coreNextPhase();};
+const coreBuyCard=buyCard;
+buyCard=function(p,name){
+  if(!p.isCPU&&!isLocalHuman(p))return false;
+  const ok=coreBuyCard(p,name);if(!ok)return false;
+  state.purchaseNotice={id:makeNoticeIdV16(),gameSeat:p.gameSeat,player:p.name,card:name};
+  renderMultiPlayers();showPurchasePopV16(state.purchaseNotice);pushState(true);
+  // 購入後もターンを自動終了しない。+購入がある場合は残り購入回数を使える。
+  // 人間は右端の「ターン終了」で明示的に終了する。
+  return true;
+};
+function rebind(id,fn){const old=document.getElementById(id);if(!old)return null;const neo=old.cloneNode(true);old.replaceWith(neo);neo.onclick=fn;return neo;}
+rebind("openSetFromLobby",()=>{if(NET.started)return toast("対戦中はセットを変更できません");switchPanel("setPanel");});rebind("rerollSupply",()=>{if(NET.isHost){state.playerCount=totalLobbyPlayers();if(buildSupply())publishConfig(true);}});rebind("startGame",startOnlineGame);rebind("toggleCpuOnline",()=>{if(NET.isHost&&!NET.started&&totalLobbyPlayers()<MAX_PLAYERS)send({type:"config",cpuCount:NET.cpuCount+1,config:currentConfig(false)});});rebind("resetOnlineRoom",()=>{if(NET.isHost&&confirm("このルームを初期化しますか？"))send({type:"reset"});});rebind("leaveOnlineRoom",()=>{if(confirm("このルームから退出しますか？"))intentionalLeaveRoom();});rebind("openCustomCards",()=>{if(NET.started)return toast("対戦中はカード設定を変更できません");openCustomPicker();});const setCustom=document.getElementById("openCustomCardsSet");if(setCustom)setCustom.onclick=()=>{if(NET.started)return toast("対戦中はカード設定を変更できません");openCustomPicker();};rebind("applySets",()=>{if(NET.started)return toast("対戦中はセットを変更できません");if(!NET.isHost)return toast("ホストのみ変更できます");const checked=[...document.querySelectorAll("[data-set]:checked")].map(x=>x.dataset.set);if(!checked.length)return toast("最低1セット選択してください");state.selectedSets=new Set(checked);state.playerCount=totalLobbyPlayers();buildSupply();publishConfig(true);switchPanel("gamePanel");});
+const coreRenderSetGrid=renderSetGrid;renderSetGrid=function(){coreRenderSetGrid();if(NET.connected&&!NET.isHost)document.querySelectorAll("[data-set]").forEach(x=>x.disabled=true);};
+rebind("backLobby",()=>{document.getElementById("result").classList.remove("show");state.inGame=false;document.getElementById("activeGame").style.display="none";document.getElementById("lobbyBox").style.display="block";NET.started=false;if(NET.isHost)send({type:"lobby_again"});updateLobby();switchPanel("gamePanel");});
+rebind("leaveGameOnline",()=>{if(confirm("対戦から退出しますか？\nあなたのゲーム内席はCPUが引き継ぎ、残りのプレイヤーは続行できます。"))intentionalLeaveRoom();});
+prepareMultiPlayerStrip();renderTitle();
+const resumeSession=readOnlineSession();
+if(resumeSession){NET.name=resumeSession.name||NET.name;setTimeout(()=>joinRoom(resumeSession.room,{resume:true,name:NET.name}),80);}
+})();
