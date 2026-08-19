@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>DOMINION ONLINE v0.17</title>
+<title>DOMINION ONLINE v0.19</title>
 <style>
 :root{
   --bg:#12150f;--panel:#20261b;--panel2:#2b3225;--line:#566148;--text:#f3f0df;--muted:#b7b9aa;
@@ -14,7 +14,10 @@ html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 10%,#303
 button,input{font:inherit}
 button{color:inherit}
 #app{height:100dvh;display:flex;flex-direction:column}
-.topbar{height:58px;flex:0 0 58px;display:flex;align-items:center;gap:10px;padding:7px 12px;background:#0d100bcc;border-bottom:1px solid #566148;backdrop-filter:blur(8px)}
+.topbar{height:58px;flex:0 0 58px;display:flex;align-items:center;gap:10px;padding:7px 12px;background:#0d100bcc;border-bottom:1px solid #566148;backdrop-filter:blur(8px);position:relative}
+.topTurnCenter{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none;min-width:250px;text-align:center;line-height:1.15;pointer-events:none}
+.topTurnCenter .phase{font-size:13px;color:#e3dfc8;font-weight:800;white-space:nowrap}
+.topTurnCenter .turnNums{font-size:20px;font-weight:900;color:#f0d277;margin-top:3px;white-space:nowrap}
 .logo{font-weight:900;letter-spacing:.12em;color:#f2dc8b;white-space:nowrap}.ver{font-size:11px;color:#a9ad9f}
 .tabs{display:flex;gap:6px;margin-left:auto}.tabbtn,.smallbtn,.mainbtn{border:1px solid #68745b;background:#252c20;border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:700}
 .tabbtn.active{background:#68775a;color:#fff}.smallbtn:hover,.mainbtn:hover,.tabbtn:hover{filter:brightness(1.14)}
@@ -38,7 +41,7 @@ button{color:inherit}
 .playerBox{background:#1d2319;border:1px solid #556049;border-radius:12px;padding:8px 10px;display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}
 .playerBox:hover{filter:brightness(1.08)}
 .playerBox.activeTurn{box-shadow:0 0 0 2px #e0bf62 inset}.pName{font-size:18px;font-weight:900}.pStats{font-size:12px;color:#c5c7bc;line-height:1.45}
-.turnCenter{min-width:210px;background:#11150f;border:1px solid #6b765d;border-radius:12px;padding:8px 12px;text-align:center}
+.turnCenter{min-width:210px;background:#11150f;border:1px solid #6b765d;border-radius:12px;padding:8px 12px;text-align:center}.legacyTurnCenter{display:none!important}
 .phase{font-size:13px;color:#d7d1ae}.turnNums{font-size:20px;font-weight:900;color:#f0d277;margin-top:2px}
 .supplyWrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:7px}
 .baseSupply{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:6px;flex:0 0 auto}
@@ -86,8 +89,23 @@ button{color:inherit}
 .modalBack{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:50;padding:14px}.modalBack.show{display:flex}
 .modal{width:min(760px,96vw);max-height:88dvh;overflow:auto;background:#20261b;border:1px solid #77816b;border-radius:16px;padding:15px;box-shadow:0 20px 70px #000}
 .modal h3{margin:0 0 7px}.modal p{color:#c7cabc;margin:4px 0 10px}.choiceGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.choiceGrid .card{min-height:120px}
+.revealDecision{display:grid;grid-template-columns:minmax(180px,260px) minmax(220px,1fr);gap:14px;align-items:stretch}
+.revealDecisionCard{min-height:230px!important;cursor:default!important}
+.revealDecisionCard .cardText{-webkit-line-clamp:unset!important;display:block!important;overflow:visible!important;font-size:14px;line-height:1.42}
+.revealDecisionCard .cardType{font-size:12px}
+.revealDecisionCard .cardName{font-size:17px}
+.revealDecisionActions{display:flex;flex-direction:column;justify-content:center;gap:9px}
+.revealDecisionActions .optionBtn{min-height:48px;font-size:15px;font-weight:900}
+.revealDecisionNote{font-size:12px;color:#bfc5b8;line-height:1.45;margin-bottom:4px}
+@media(max-width:700px){
+  .revealDecision{grid-template-columns:1fr;gap:8px}
+  .revealDecisionCard{min-height:155px!important}
+  .revealDecisionCard .cardText{font-size:11px}
+  .revealDecisionActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+  .revealDecisionActions .optionBtn{min-height:42px;font-size:11px;padding:5px}
+}
 .optionGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.optionBtn{border:1px solid #65715a;background:#30382a;border-radius:12px;padding:12px;text-align:left;cursor:pointer}
-.selected{box-shadow:0 0 0 3px #f2ce69 inset!important;transform:translateY(-2px)}
+.selected{box-shadow:0 0 0 3px #00e5ff inset,0 0 0 2px #071316,0 0 18px #00e5ff!important;transform:translateY(-3px);filter:brightness(1.08) saturate(1.05)}
 .inspectCols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .inspectBox{border:1px solid #59644d;border-radius:12px;padding:10px;background:#171c14}
 .inspectBox h4{margin:0 0 8px;color:#efd574}
@@ -107,7 +125,7 @@ button{color:inherit}
 .toast{position:fixed;left:50%;top:74px;transform:translateX(-50%) translateY(-12px);opacity:0;pointer-events:none;background:#151a12;border:1px solid #83744f;padding:10px 18px;border-radius:12px;z-index:70;font-weight:900;transition:.2s}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .result{position:fixed;inset:0;background:#000c;z-index:60;display:none;align-items:center;justify-content:center;padding:16px}.result.show{display:flex}.resultCard{width:min(620px,95vw);background:#23291f;border:1px solid #777f6a;border-radius:18px;padding:22px}.resultCard h2{font-size:36px;margin:0 0 15px;color:#efd574}.scoreRow{display:flex;justify-content:space-between;border-bottom:1px solid #4f5946;padding:10px;font-size:20px}
 @media(max-width:850px){
- .topbar{height:52px;flex-basis:52px;padding:5px 7px}.logo{font-size:13px}.ver{display:none}.tabbtn{padding:7px 8px;font-size:12px}
+ .topbar{height:52px;flex-basis:52px;padding:5px 7px}.logo{font-size:13px}.ver{display:none}.tabbtn{padding:7px 8px;font-size:12px}.topTurnCenter{min-width:190px}.topTurnCenter .phase{font-size:10px}.topTurnCenter .turnNums{font-size:15px;margin-top:2px}
  .roomBody{padding:5px}.playerStrip{grid-template-columns:1fr 1fr;min-height:58px}.turnCenter{grid-column:1/3;grid-row:2;min-width:0;padding:4px 7px}.playerBox{padding:5px 7px}.pName{font-size:14px}.pStats{font-size:10px}.turnNums{font-size:17px}.phase{font-size:11px}
  .baseSupply{gap:3px}.kingdomSupply{gap:4px}.card{padding:4px;border-radius:7px}.cardTop{font-size:11px}.count{font-size:12px}.cost{font-size:9px;padding:1px 5px}.cardType{font-size:9px}.cardText{font-size:10.5px;-webkit-line-clamp:4;margin-top:2px}
  .baseSupply .card{min-height:46px}.lowerBoard{flex-basis:232px;grid-template-columns:86px minmax(0,1fr);gap:4px}.deckZone{padding:5px}.deckZoneTitle{font-size:11px}.deckCountBig{font-size:20px}.deckStack{width:52px;height:74px;box-shadow:5px 5px 0 #242a20,9px 9px 0 #181d15;font-size:10px}.rightLower{gap:4px}.playArea,.handArea{padding:5px}.playHeader,.handHeader{min-height:28px}.playHeader strong,.handHeader strong{font-size:12px}.smallbtn,.mainbtn{padding:6px 8px;font-size:11px}.playCards,.handCards{gap:3px}.playCards .card,.handCards .card{flex-basis:82px}.handBody{grid-template-columns:minmax(0,1fr) 64px 6.5em;gap:3px}.discardFace,.discardEmpty,.discardNameOnly{width:55px}.discardTitle{font-size:9px}.nextPhaseBtn{width:6.5em;font-size:11px}.inspectCols{grid-template-columns:1fr}
@@ -125,11 +143,11 @@ button{color:inherit}
 .landscapeCard .lsTop{display:flex;justify-content:space-between;gap:6px;font-weight:900;font-size:12px}
 .landscapeCard .lsType{font-size:9px;opacity:.75;margin-top:2px}.landscapeCard .lsText{font-size:10px;line-height:1.25;margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .landscapeCard.event{background:#4a4a4a}.landscapeCard.landmark{background:#355d46}.landscapeCard.project{background:#624561}.landscapeCard.way{background:#36616b}.landscapeCard.trait{background:#574a75}.landscapeCard.ally{background:#665f43}.landscapeCard.prophecy{background:#297a83}.landscapeCard.buyable{box-shadow:0 0 0 2px #e1bc58 inset}
-.landscapeCard.selectedLandscape{box-shadow:0 0 0 3px #f5d46f inset}
+.landscapeCard.selectedLandscape{box-shadow:0 0 0 3px #00e5ff inset,0 0 16px #00e5ff}
 .catalogStat{font-size:11px;color:#c9c7b9;margin-left:auto}
 @media(max-width:850px){.landscapeStrip{flex-basis:50px}.landscapeCard{flex-basis:135px;padding:4px 5px}.landscapeCard .lsText{font-size:8px}.landscapeCard .lsTop{font-size:10px}}
 
-.onlineTitleForm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:16px}.onlineName{min-width:180px;flex:1;max-width:320px;background:#11160f;color:#fff;border:1px solid #67735a;border-radius:10px;padding:10px 12px}.roomGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:14px}.roomCard{border:1px solid #647057;border-radius:13px;background:#262e21;padding:12px;cursor:pointer;text-align:left}.roomCard:hover{filter:brightness(1.12)}.roomCard b{font-size:17px}.roomStatus{font-size:11px;color:#c3c7b9;margin-top:5px}.onlineSeats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.seatCard{border:1px solid #59644d;border-radius:11px;padding:10px;background:#272e22}.seatCard.host{box-shadow:0 0 0 2px #c8a658 inset}.onlineLobbyActions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.customPickerToolbar{display:flex;gap:7px;align-items:center;margin-bottom:9px}.customSearch{flex:1;background:#11160f;color:#fff;border:1px solid #67735a;border-radius:9px;padding:8px}.customCardList{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-height:52dvh;overflow:auto}.customCardBtn{border:1px solid #5d6852;border-radius:9px;background:#293124;color:#eee;padding:7px;text-align:left;cursor:pointer;font-size:11px}.customCardBtn.selected{box-shadow:0 0 0 3px #f2ce69 inset;background:#4c472a}.netBadge{font-size:10px;padding:2px 6px;border-radius:999px;background:#35422d;color:#d9e2d1;margin-left:6px}.roomCard{position:relative}
+.onlineTitleForm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:16px}.onlineName{min-width:180px;flex:1;max-width:320px;background:#11160f;color:#fff;border:1px solid #67735a;border-radius:10px;padding:10px 12px}.roomGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:14px}.roomCard{border:1px solid #647057;border-radius:13px;background:#262e21;padding:12px;cursor:pointer;text-align:left}.roomCard:hover{filter:brightness(1.12)}.roomCard b{font-size:17px}.roomStatus{font-size:11px;color:#c3c7b9;margin-top:5px}.onlineSeats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.seatCard{border:1px solid #59644d;border-radius:11px;padding:10px;background:#272e22}.seatCard.host{box-shadow:0 0 0 2px #c8a658 inset}.onlineLobbyActions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.customPickerToolbar{display:flex;gap:7px;align-items:center;margin-bottom:9px}.customSearch{flex:1;background:#11160f;color:#fff;border:1px solid #67735a;border-radius:9px;padding:8px}.customCardList{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-height:52dvh;overflow:auto}.customCardBtn{border:1px solid #5d6852;border-radius:9px;background:#293124;color:#eee;padding:7px;text-align:left;cursor:pointer;font-size:11px}.customCardBtn.selected{box-shadow:0 0 0 3px #00e5ff inset,0 0 14px #00e5ff;background:#20383b}.netBadge{font-size:10px;padding:2px 6px;border-radius:999px;background:#35422d;color:#d9e2d1;margin-left:6px}.roomCard{position:relative}
 .roomJoin{display:block;width:100%;border:0;background:transparent;color:inherit;text-align:left;padding:0;cursor:pointer}
 .roomResetTitle{position:absolute;right:8px;top:8px;z-index:2;padding:5px 8px!important;font-size:10px!important}
 .purchasePopOnline{position:fixed;z-index:130;pointer-events:none;transform:translate(-50%,-100%);background:#151a12f2;border:2px solid #d6b454;border-radius:11px;padding:7px 12px;font-weight:900;font-size:15px;color:#fff;box-shadow:0 8px 28px #000a;opacity:0;transition:.15s;white-space:nowrap}
@@ -150,7 +168,11 @@ button{color:inherit}
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="logo">DOMINION <span class="ver">ONLINE v0.17</span></div>
+    <div class="logo">DOMINION <span class="ver">ONLINE v0.19</span></div>
+    <div id="topTurnCenter" class="topTurnCenter">
+      <div id="phaseLabel" class="phase">プレイヤー / アクションフェーズ</div>
+      <div id="turnNums" class="turnNums">A 1 / B 1 / ¥ 0</div>
+    </div>
     <div class="tabs" id="roomTabs" style="display:none">
       <button class="tabbtn active" data-panel="gamePanel">ゲーム</button>
       <button class="tabbtn" data-panel="setPanel">セット</button>
@@ -162,7 +184,7 @@ button{color:inherit}
 
   <section id="titleScreen" class="screen active">
     <div class="titleCard">
-      <div class="ver">ONLINE BUILD v0.16</div>
+      <div class="ver">ONLINE BUILD v0.19</div>
       <h1>DOMINION</h1>
       <p>
         4つの固定ルームで遊ぶオンライン版です。CPUを追加すれば1人でも開始できます。<br>
@@ -199,10 +221,7 @@ button{color:inherit}
             <div id="humanBox" class="playerBox" data-player="0">
               <div><div class="pName">あなた</div><div id="humanStats" class="pStats"></div></div>
             </div>
-            <div class="turnCenter">
-              <div id="phaseLabel" class="phase">準備中</div>
-              <div id="turnNums" class="turnNums">A 1 / B 1 / ¥ 0</div>
-            </div>
+            <div class="turnCenter legacyTurnCenter" aria-hidden="true"></div>
             <div id="cpuBox" class="playerBox" data-player="1">
               <div><div class="pName">CPU</div><div id="cpuStats" class="pStats"></div></div>
             </div>
@@ -810,11 +829,17 @@ async function sentry(p){
     for(const n of reveal){if(trashPriority(n)>=70){state.trash.push(n);p.trash.push(n);log(`${p.name} は衛兵で <b>${n}</b> を廃棄`);}else keep.push(n);}
     p.deck.push(...keep.reverse());const after=score(p);if(after!==before)showPointPop(p,after-before);return;
   }
-  for(const n of reveal){
-    const op=await optionModal("衛兵",`${n} をどうしますか？`,["廃棄","捨て札","山札の上"]);
+  for(let ri=0;ri<reveal.length;ri++){
+    const n=reveal[ri];
+    const op=await revealedCardOptionModal(
+      "衛兵",
+      `山札から見たカード ${ri+1}/${reveal.length}`,
+      n,
+      ["廃棄","捨て札","山札の上"]
+    );
     if(op===0){state.trash.push(n);p.trash.push(n);log(`${p.name} は衛兵で <b>${n}</b> を廃棄`);}
-    else if(op===1)p.discard.push(n);
-    else p.deck.push(n);
+    else if(op===1){p.discard.push(n);log(`${p.name} は衛兵で <b>${n}</b> を捨て札へ`);}
+    else {p.deck.push(n);log(`${p.name} は衛兵で <b>${n}</b> を山札の上へ`);}
   }
   const after=score(p);if(after!==before)showPointPop(p,after-before);
 }
@@ -1141,6 +1166,24 @@ function optionModal(title,desc,opts){
     document.querySelectorAll("[data-opt]").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.opt);modalClose();resolve(i);});
   });
 }
+function revealedCardOptionModal(title,desc,name,opts){
+  return new Promise(resolve=>{
+    const cardInner=cardHTML(name,"choice").replace(/^<div[^>]*>|<\/div>$/g,"");
+    const html=`<div class="revealDecision">
+      <div class="card ${cardClass(name)} revealDecisionCard">${cardInner}</div>
+      <div class="revealDecisionActions">
+        <div class="revealDecisionNote">カードの効果を確認して処理を選択してください。</div>
+        ${opts.map((o,i)=>`<button class="optionBtn" data-reveal-opt="${i}">${o}</button>`).join("")}
+      </div>
+    </div>`;
+    modalOpen(title,desc||`${name} を確認`,html);
+    document.querySelectorAll("[data-reveal-opt]").forEach(b=>b.onclick=()=>{
+      const i=Number(b.dataset.revealOpt);
+      modalClose();
+      resolve(i);
+    });
+  });
+}
 function multiOptionModal(title,desc,opts,count){
   return new Promise(resolve=>{
     let s=new Set();
@@ -1185,6 +1228,6 @@ renderSetGrid();renderLog();
 
 
 
-<script src="online-v017.js"></script>
+<script src="online-v019.js"></script>
 </body>
 </html>
